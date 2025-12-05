@@ -32,7 +32,7 @@
     z-index:2;pointer-events:none;
   }
 
-  /* pequenos ajustes de mobile */
+  /* mobile tweak */
   @media (max-width:420px){ :root{--moon-size:92vmin;} }
 </style>
 </head>
@@ -44,24 +44,13 @@
 </div>
 
 <script>
-/* ---------- CONFIGURÁVEIS ---------- */
-// URL RAW da sua imagem (a que você já colocou no repo)
+/* ---------- CONFIGURÁVEIS (mude só aqui se quiser alterar) ---------- */
 const GITHUB_RAW = "https://raw.githubusercontent.com/arthramospaula-lab/lua-repo/refs/heads/main/Moon.jpg";
-
-// quantas estrelas aproximadas (não exagera)
-const TARGET_STARS = 80;
-
-// limiar de brilho para considerar "céu" (0=preto,255=branco) - ajuste se quiser mais/menos
-const BRIGHTNESS_THRESHOLD = 90;
-
-/* faixa radial RELATIVA ao raio da "lua" onde as estrelas serão colocadas
-   valores multiplicam o raio da lua (1 = exatamente na borda).
-   Ajuste se quiser anel mais fino/largo:
-   innerMultiplier > 1 garante que não caiem estrelas sobre a lua.
-*/
-const INNER_MULTIPLIER = 1.06; // estrelas começam um pouco fora da borda da lua
-const OUTER_MULTIPLIER = 1.28; // até aqui elas aparecem
-/* ----------------------------------- */
+const TARGET_STARS = 72;           // número de estrelas (moderado)
+const BRIGHTNESS_THRESHOLD = 115;  // pixels mais claros (até ~115) contam como "céu"
+const INNER_MULTIPLIER = 1.04;     // começa pouco fora da borda da lua
+const OUTER_MULTIPLIER = 1.22;     // até onde o anel alcança
+/* ------------------------------------------------------------------- */
 
 const moonDiv = document.getElementById('moonDiv');
 const wrapper = document.getElementById('moonWrapper');
@@ -85,7 +74,7 @@ function prepareCanvases(){
   tmp.height = canvas.height;
   const tctx = tmp.getContext('2d');
 
-  const sw = img.width, sh = img.height;
+  const sw = img.width || 1, sh = img.height || 1;
   const dw = tmp.width, dh = tmp.height;
   const scale = Math.max(dw / sw, dh / sh);
   const drawW = Math.round(sw * scale);
@@ -103,12 +92,12 @@ function prepareCanvases(){
   moonDiv.style.backgroundImage = `url("${GITHUB_RAW}")`;
 }
 
-/* função para calcular brilho médio do pixel */
+/* brilho médio do pixel */
 function pixelBrightness(p){
   return (p[0] + p[1] + p[2]) / 3;
 }
 
-/* gera estrelas apenas onde o pixel é escuro E dentro do anel radial */
+/* gera estrelas apenas dentro do anel e em pixels escuros do "céu" */
 function generateStarsFromImage(){
   sampledStars = [];
   const tmpCtx = canvas._tmpCtx;
@@ -118,75 +107,69 @@ function generateStarsFromImage(){
   const H = canvas.height;
   const centerX = W/2;
   const centerY = H/2;
-  const moonRadius = Math.min(W, H) / 2; // raio da div circular
+  const moonRadius = Math.min(W, H) / 2;
 
   const innerR = moonRadius * INNER_MULTIPLIER;
   const outerR = moonRadius * OUTER_MULTIPLIER;
 
   let attempts = 0;
-  const maxAttempts = Math.max(4000, TARGET_STARS * 60);
+  const maxAttempts = Math.max(5000, TARGET_STARS * 80);
   let placed = 0;
 
   while(attempts < maxAttempts && placed < TARGET_STARS){
     attempts++;
-    const x = Math.floor(Math.random() * W);
-    const y = Math.floor(Math.random() * H);
+    const angle = Math.random() * Math.PI * 2;
+    // sorteamos um raio dentro do anel com distribuição que favorece meio do anel
+    const r = innerR + (outerR - innerR) * Math.pow(Math.random(), 0.9);
+    const x = Math.floor(centerX + Math.cos(angle) * r);
+    const y = Math.floor(centerY + Math.sin(angle) * r);
 
-    // distância ao centro
-    const dx = x - centerX;
-    const dy = y - centerY;
-    const dist = Math.sqrt(dx*dx + dy*dy);
-
-    // só dentro do anel
-    if (!(dist >= innerR && dist <= outerR)) continue;
+    if (x < 0 || x >= W || y < 0 || y >= H) continue;
 
     const p = tmpCtx.getImageData(x, y, 1, 1).data;
-    const a = p[3];
-    if (a === 0) continue;
+    if (p[3] === 0) continue; // transparente (não deveria)
 
     const brightness = pixelBrightness(p);
 
-    // aceitar somente pixels suficientemente escuros (céu)
+    // aceitar somente pixels suficientemente escuros (céu), mas com tolerância
     if (brightness <= BRIGHTNESS_THRESHOLD){
       // checar proximidade com outras estrelas
       let ok = true;
       for (let s of sampledStars) {
         const ddx = s.x - x, ddy = s.y - y;
-        if ((ddx*ddx + ddy*ddy) < ( (s.size + 3) * (s.size + 3) )) { ok = false; break; }
+        if ((ddx*ddx + ddy*ddy) < ( (s.size*2.5) * (s.size*2.5) )) { ok = false; break; }
       }
       if (!ok) continue;
 
-      const size = 0.9 + Math.random() * 2.6; // 0.9..3.5 px
-      const baseAlpha = 0.25 + Math.random()*0.65;
-      const twDur = 1 + Math.random()*2.2;
+      const size = 0.8 + Math.random() * 2.6; // 0.8..3.4 px
+      const baseAlpha = 0.28 + Math.random()*0.58;
+      const twDur = 1.1 + Math.random()*2.0;
       const phase = Math.random()*Math.PI*2;
       sampledStars.push({ x, y, size, baseAlpha, twDur, phase });
       placed++;
     }
   }
-
-  // se não conseguir colocar suficientes, pode relaxar threshold (não necessário agora)
 }
 
-/* desenha as estrelas animadas */
+/* desenha cada frame, com efeito de brilho suave */
 function drawStarsFrame(time){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   for (let s of sampledStars){
     const t = time/1000;
-    const a = s.baseAlpha * (0.5 + 0.5 * Math.abs(Math.sin((t * (2*Math.PI / s.twDur)) + s.phase)));
-    // estrela principal
+    const a = s.baseAlpha * (0.55 + 0.45 * Math.abs(Math.sin((t * (2*Math.PI / s.twDur)) + s.phase)));
+    // ponto central
     ctx.beginPath();
     ctx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
-    ctx.arc(s.x + 0.5, s.y + 0.5, s.size/2, 0, Math.PI*2);
+    ctx.arc(s.x + 0.5, s.y + 0.5, Math.max(0.4, s.size/2), 0, Math.PI*2);
     ctx.fill();
 
-    // brilho suave ao redor
-    const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.size*2.0);
+    // brilho suave ao redor (radial gradient)
+    const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.size*2.2);
     g.addColorStop(0, `rgba(255,255,255,${(a*0.45).toFixed(3)})`);
     g.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.arc(s.x, s.y, s.size*2.0, 0, Math.PI*2);
+    ctx.arc(s.x, s.y, s.size*2.2, 0, Math.PI*2);
     ctx.fill();
   }
   requestAnimationFrame(drawStarsFrame);
