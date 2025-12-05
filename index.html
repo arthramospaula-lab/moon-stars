@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Lua com Estrelas (só no céu)</title>
+<style>
+  :root { --moon-size: min(85vmin, 560px); }
+  html,body{height:100%;margin:0;background:#000;}
+  body{
+    display:flex;align-items:center;justify-content:center;
+    min-height:100vh;overflow:hidden;font-family:system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+  }
+
+  .moon-wrapper{
+    position:relative;
+    width:var(--moon-size);
+    height:var(--moon-size);
+    display:flex;align-items:center;justify-content:center;
+    z-index:2; filter:contrast(1.06) brightness(1.02);
+  }
+
+  .moon{
+    position:absolute; inset:0;
+    border-radius:50%;
+    background-repeat:no-repeat;
+    background-size:cover;
+    background-position:center;
+    box-shadow: inset 0 0 30px rgba(0,0,0,0.45);
+  }
+
+  /* canvas com as estrelas fica sobre a lua */
+  .stars-canvas{
+    position:absolute; inset:0; z-index:3; pointer-events:none; border-radius:50%;
+  }
+
+  /* pequenas otimizações móveis */
+  @media (max-width:420px){
+    :root { --moon-size: 92vmin; }
+  }
+</style>
+</head>
+<body>
+
+  <div class="moon-wrapper" id="moonWrapper" aria-label="Lua com estrelas">
+    <div class="moon" id="moonDiv" aria-hidden="true"></div>
+    <canvas class="stars-canvas" id="starsCanvas" aria-hidden="true"></canvas>
+  </div>
+
+<script>
+/* --- COLEI A SUA URL RAW AQUI --- */
+const GITHUB_RAW = "https://raw.githubusercontent.com/arthramospaula-lab/lua-repo/refs/heads/main/Moon.jpg";
+// Se por algum motivo acima não carregar, tente:
+// const GITHUB_RAW = "https://raw.githubusercontent.com/arthramospaula-lab/lua-repo/main/Moon.jpg";
+
+const moonDiv = document.getElementById("moonDiv");
+const wrapper = document.getElementById("moonWrapper");
+const canvas = document.getElementById("starsCanvas");
+const ctx = canvas.getContext("2d", { alpha: true });
+
+/* parâmetros */
+const TOTAL_STARS = 160;
+const STAR_MIN = 1.5;
+const STAR_MAX = 3.8;
+const BRIGHTNESS_THRESHOLD = 70; // 0..255 - ajuste para menos/more estrelas
+const TWINKLE_MIN = 1.2;
+const TWINKLE_MAX = 3.0;
+
+const img = new Image();
+img.crossOrigin = "anonymous";
+img.src = GITHUB_RAW;
+
+img.onload = () => {
+  // aplica imagem como background
+  moonDiv.style.backgroundImage = `url("${GITHUB_RAW}")`;
+  resizeCanvasAndDraw();
+  generateStarsFromImage();
+};
+
+function resizeCanvasAndDraw(){
+  const rect = wrapper.getBoundingClientRect();
+  canvas.width = Math.round(rect.width);
+  canvas.height = Math.round(rect.height);
+
+  // canvas temporário para sample da imagem (mesmo comportamento de background-size:cover)
+  const tmpCanvas = document.createElement("canvas");
+  const tctx = tmpCanvas.getContext("2d");
+  tmpCanvas.width = canvas.width;
+  tmpCanvas.height = canvas.height;
+
+  const sw = img.width, sh = img.height;
+  const dw = tmpCanvas.width, dh = tmpCanvas.height;
+  const scale = Math.max(dw / sw, dh / sh);
+  const drawW = sw * scale, drawH = sh * scale;
+  const dx = (dw - drawW) / 2;
+  const dy = (dh - drawH) / 2;
+
+  tctx.clearRect(0,0,dw,dh);
+  tctx.drawImage(img, dx, dy, drawW, drawH);
+
+  canvas._tmpCanvas = tmpCanvas;
+  canvas._tmpCtx = tctx;
+}
+
+function generateStarsFromImage() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const tmpCtx = canvas._tmpCtx;
+  if (!tmpCtx) return;
+
+  let placed = 0;
+  let attempts = 0;
+  const maxAttempts = TOTAL_STARS * 8;
+  const stars = [];
+
+  while (attempts < maxAttempts && placed < TOTAL_STARS) {
+    attempts++;
+    const x = Math.floor(Math.random() * canvas.width);
+    const y = Math.floor(Math.random() * canvas.height);
+    const p = tmpCtx.getImageData(x, y, 1, 1).data;
+    const r = p[0], g = p[1], b = p[2], a = p[3];
+    const brightness = (r + g + b) / 3;
+
+    if (a === 0 || brightness <= BRIGHTNESS_THRESHOLD) {
+      const size = STAR_MIN + Math.random() * (STAR_MAX - STAR_MIN);
+      const baseAlpha = 0.4 + Math.random() * 0.6;
+      const twinkleDur = TWINKLE_MIN + Math.random() * (TWINKLE_MAX - TWINKLE_MIN);
+      const phase = Math.random() * Math.PI * 2;
+      stars.push({ x, y, size, baseAlpha, twinkleDur, phase });
+      placed++;
+    }
+  }
+
+  function drawFrame(t) {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    for (let i = 0; i < stars.length; i++) {
+      const s = stars[i];
+      const elapsed = t / 1000;
+      const a = s.baseAlpha * (0.6 + 0.4 * Math.abs(Math.sin((elapsed * (2*Math.PI / s.twinkleDur)) + s.phase)));
+      ctx.beginPath();
+      ctx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
+      const r = s.size / 2;
+      ctx.arc(s.x + 0.5, s.y + 0.5, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // brilho sutil
+      const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.size*1.8);
+      g.addColorStop(0, `rgba(255,255,255,${(a*0.6).toFixed(3)})`);
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.size * 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    requestAnimationFrame(drawFrame);
+  }
+
+  requestAnimationFrame(drawFrame);
+}
+
+/* responsividade */
+let resizeTimeout;
+function handleResize() {
+  clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(() => {
+    resizeCanvasAndDraw();
+    generateStarsFromImage();
+  }, 120);
+}
+
+window.addEventListener("resize", handleResize);
+window.addEventListener("orientationchange", handleResize);
+
+// fallback caso imagem carregue depois
+if (!img.complete) {
+  img.addEventListener("load", () => {
+    resizeCanvasAndDraw();
+    generateStarsFromImage();
+  });
+}
+</script>
+
+</body>
+</html>
